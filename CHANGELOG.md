@@ -1,5 +1,8 @@
 # cisco.intersight Ansible Collection Changelog
 
+## Version 2.16.0
+- Chassis Profile, Domain Profile, Organization, Resource Group, and Server Profile Template modules added.
+
 ## Version 2.15.0
 - Fix for issue #290 to change all target_plaforms to All, Standalone, FIAttached, or Chassis
 
