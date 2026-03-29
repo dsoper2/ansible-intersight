@@ -87,6 +87,7 @@ api_response:
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.intersight.plugins.module_utils.intersight import IntersightModule, intersight_argument_spec
 
+
 def main():
     argument_spec = intersight_argument_spec.copy()
     argument_spec.update(
