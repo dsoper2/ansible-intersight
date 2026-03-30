@@ -15,161 +15,215 @@
       state: absent
     loop:
       - test_rg
+      - test_rg_subtargets
 
-  - name: Create Resource Group with all qualifier - check-mode
-    cisco.intersight.intersight_resource_group:
+  # -- Lookup test domain for resource tests --
+
+  - name: Find an Intersight-managed UCS domain target
+    cisco.intersight.intersight_rest_api:
       <<: *api_info
-      name: test_rg
-      description: "Test resource group"
-      qualifier: all
-    check_mode: true
-    register: create_check_mode
+      resource_path: /asset/Targets
+      query_params:
+        $filter: "TargetType eq 'UCSFIISM'"
+        $select: "Name,RegisteredDevice"
+        $expand: "RegisteredDevice($select=Moid)"
+        $top: 1
+    register: domain_target_result
 
-  - name: Verify check-mode did not create resource
-    ansible.builtin.assert:
-      that:
-        - create_check_mode is changed
-        - create_check_mode.api_response == {}
+  - name: Set domain target name
+    ansible.builtin.set_fact:
+      test_domain_name: "{{ domain_target_result.api_response.Name | default('') }}"
+      test_domain_reg_moid: "{{ domain_target_result.api_response.RegisteredDevice.Moid | default('') }}"
+    when: domain_target_result.api_response.Name is defined
 
-  - name: Create Resource Group with all qualifier
-    cisco.intersight.intersight_resource_group:
+  # -- Domain-dependent tests --
+
+  - block:
+    - name: Create Resource Group - check-mode
+      cisco.intersight.intersight_resource_group:
+        <<: *api_info
+        name: test_rg
+        description: "Test resource group"
+        resources:
+          - domain_name: "{{ test_domain_name }}"
+      check_mode: true
+      register: create_check_mode
+
+    - name: Verify check-mode did not create resource
+      ansible.builtin.assert:
+        that:
+          - create_check_mode is changed
+          - create_check_mode.api_response == {}
+
+    - name: Create Resource Group with domain resource
+      cisco.intersight.intersight_resource_group:
+        <<: *api_info
+        name: test_rg
+        description: "Test resource group with domain"
+        resources:
+          - domain_name: "{{ test_domain_name }}"
+      register: create_result
+
+    - name: Fetch info after creation
+      cisco.intersight.intersight_resource_group_info:
+        <<: *api_info
+        name: test_rg
+      register: create_info
+
+    - name: Verify creation and enriched info
+      ansible.builtin.assert:
+        that:
+          - create_result.changed
+          - create_info.api_response[0].Name == 'test_rg'
+          - create_info.api_response[0].Description == 'Test resource group with domain'
+          - create_info.api_response[0].domains | length == 1
+          - create_info.api_response[0].domains[0] == test_domain_name
+          - create_info.api_response[0].sub_targets | length == 0
+
+    - name: Create Resource Group with domain resource (idempotency)
+      cisco.intersight.intersight_resource_group:
+        <<: *api_info
+        name: test_rg
+        description: "Test resource group with domain"
+        resources:
+          - domain_name: "{{ test_domain_name }}"
+      register: create_idempotent
+
+    - name: Verify idempotency
+      ansible.builtin.assert:
+        that:
+          - not create_idempotent.changed
+
+    - name: Delete Resource Group
+      cisco.intersight.intersight_resource_group:
+        <<: *api_info
+        name: test_rg
+        state: absent
+      register: delete_result
+
+    - name: Verify deletion
+      ansible.builtin.assert:
+        that:
+          - delete_result.changed
+
+    - name: Delete Resource Group again (idempotency)
+      cisco.intersight.intersight_resource_group:
+        <<: *api_info
+        name: test_rg
+        state: absent
+      register: delete_idempotent
+
+    - name: Verify delete idempotency
+      ansible.builtin.assert:
+        that:
+          - not delete_idempotent.changed
+
+    when: test_domain_name | default('') != ''
+
+  - name: Skip domain tests if no UCSFIISM target available
+    ansible.builtin.debug:
+      msg: "No Intersight-managed UCS domain target found - skipping domain resource tests"
+    when: test_domain_name | default('') == ''
+
+  # -- Lookup server serials for sub-targets tests --
+
+  - name: Find Intersight-managed servers for sub-targets test
+    cisco.intersight.intersight_rest_api:
       <<: *api_info
-      name: test_rg
-      description: "Test resource group"
-      qualifier: all
-    register: create_result
+      resource_path: /compute/PhysicalSummaries
+      return_list: true
+      query_params:
+        $filter: "ManagementMode eq 'Intersight'"
+        $select: "Serial,SourceObjectType"
+        $top: 2
+    register: server_lookup_result
 
-  - name: Fetch info after creation
-    cisco.intersight.intersight_resource_group_info:
-      <<: *api_info
-      name: test_rg
-    register: create_info
+  - name: Set test server serials
+    ansible.builtin.set_fact:
+      test_server_serials: "{{ server_lookup_result.api_response | map(attribute='Serial') | list }}"
+    when: server_lookup_result.api_response | length > 0
 
-  - name: Verify creation
-    ansible.builtin.assert:
-      that:
-        - create_result.changed
-        - create_info.api_response[0].Name == 'test_rg'
-        - create_info.api_response[0].Description == 'Test resource group'
-        - create_info.api_response[0].Qualifier == 'Allow-All'
+  # -- Sub-targets tests --
 
-  - name: Create Resource Group with all qualifier (idempotency)
-    cisco.intersight.intersight_resource_group:
-      <<: *api_info
-      name: test_rg
-      description: "Test resource group"
-      qualifier: all
-    register: create_idempotent
+  - block:
+    - name: Create Resource Group with sub-targets
+      cisco.intersight.intersight_resource_group:
+        <<: *api_info
+        name: test_rg_subtargets
+        description: "Resource group with sub-targets"
+        resources:
+          - domain_name: "sub-targets-domain"
+            sub_targets: "{{ test_server_serials }}"
+      register: subtargets_create
 
-  - name: Verify idempotency
-    ansible.builtin.assert:
-      that:
-        - not create_idempotent.changed
+    - name: Fetch info after sub-targets creation
+      cisco.intersight.intersight_resource_group_info:
+        <<: *api_info
+        name: test_rg_subtargets
+      register: subtargets_info
 
-  - name: Update Resource Group from all to selectors
-    cisco.intersight.intersight_resource_group:
-      <<: *api_info
-      name: test_rg
-      description: "Now scoped to specific devices"
-      qualifier: selectors
-      selectors:
-        - "/api/v1/asset/DeviceRegistrations?$filter=Moid in ('507f1f77bcf86cd799439011')"
-    register: update_to_selectors
+    - name: Verify sub-targets creation
+      ansible.builtin.assert:
+        that:
+          - subtargets_create.changed
+          - subtargets_info.api_response[0].Name == 'test_rg_subtargets'
+          - subtargets_info.api_response[0].domains | length == 0
+          - subtargets_info.api_response[0].sub_targets | length == test_server_serials | length
+          - subtargets_info.api_response[0].sub_targets | map(attribute='serial') | sort == test_server_serials | sort
 
-  - name: Fetch info after update to selectors
-    cisco.intersight.intersight_resource_group_info:
-      <<: *api_info
-      name: test_rg
-    register: selectors_info
+    - name: Create Resource Group with sub-targets (idempotency)
+      cisco.intersight.intersight_resource_group:
+        <<: *api_info
+        name: test_rg_subtargets
+        description: "Resource group with sub-targets"
+        resources:
+          - domain_name: "sub-targets-domain"
+            sub_targets: "{{ test_server_serials }}"
+      register: subtargets_idempotent
 
-  - name: Verify update to selectors
-    ansible.builtin.assert:
-      that:
-        - update_to_selectors.changed
-        - selectors_info.api_response[0].Qualifier == 'Allow-Selectors'
-        - selectors_info.api_response[0].Description == 'Now scoped to specific devices'
-        - selectors_info.api_response[0].Selectors | length == 1
+    - name: Verify sub-targets idempotency
+      ansible.builtin.assert:
+        that:
+          - not subtargets_idempotent.changed
 
-  - name: Update Resource Group from all to selectors (idempotency)
-    cisco.intersight.intersight_resource_group:
-      <<: *api_info
-      name: test_rg
-      description: "Now scoped to specific devices"
-      qualifier: selectors
-      selectors:
-        - "/api/v1/asset/DeviceRegistrations?$filter=Moid in ('507f1f77bcf86cd799439011')"
-    register: selectors_idempotent
+    - name: Delete Resource Group with sub-targets
+      cisco.intersight.intersight_resource_group:
+        <<: *api_info
+        name: test_rg_subtargets
+        state: absent
+      register: subtargets_delete
 
-  - name: Verify selectors idempotency
-    ansible.builtin.assert:
-      that:
-        - not selectors_idempotent.changed
+    - name: Verify sub-targets deletion
+      ansible.builtin.assert:
+        that:
+          - subtargets_delete.changed
 
-  - name: Update Resource Group with different selector
-    cisco.intersight.intersight_resource_group:
-      <<: *api_info
-      name: test_rg
-      description: "Now scoped to specific devices"
-      qualifier: selectors
-      selectors:
-        - "/api/v1/compute/Blades?$filter=Serial in ('FCH26387BD1') and ManagementMode eq 'Intersight'"
-    register: update_selector_value
+    when: test_server_serials | default([]) | length > 0
 
-  - name: Fetch info after selector change
-    cisco.intersight.intersight_resource_group_info:
-      <<: *api_info
-      name: test_rg
-    register: updated_selector_info
+  - name: Skip sub-targets tests if no servers available
+    ansible.builtin.debug:
+      msg: "No Intersight-managed servers found - skipping sub-targets tests"
+    when: test_server_serials | default([]) | length == 0
 
-  - name: Verify selector was updated
-    ansible.builtin.assert:
-      that:
-        - update_selector_value.changed
-        - updated_selector_info.api_response[0].Qualifier == 'Allow-Selectors'
-        - updated_selector_info.api_response[0].Selectors | length == 1
+  # -- Validation and error tests (no domain needed) --
 
-  - name: Fetch all Resource Groups
-    cisco.intersight.intersight_resource_group_info:
-      <<: *api_info
-    register: all_rg_info
-
-  - name: Verify at least one Resource Group exists
-    ansible.builtin.assert:
-      that:
-        - all_rg_info.api_response | length >= 1
-
-  - name: Delete Resource Group
-    cisco.intersight.intersight_resource_group:
-      <<: *api_info
-      name: test_rg
-      state: absent
-    register: delete_result
-
-  - name: Verify deletion
-    ansible.builtin.assert:
-      that:
-        - delete_result.changed
-
-  - name: Delete Resource Group again (idempotency)
-    cisco.intersight.intersight_resource_group:
-      <<: *api_info
-      name: test_rg
-      state: absent
-    register: delete_idempotent
-
-  - name: Verify delete idempotency
-    ansible.builtin.assert:
-      that:
-        - not delete_idempotent.changed
-
-  - name: Test validation - selectors qualifier without selectors param (should fail)
+  - name: Test validation - present without resources (should fail)
     cisco.intersight.intersight_resource_group:
       <<: *api_info
       name: test_rg_validation
-      qualifier: selectors
     register: validation_fail
     failed_when:
       - validation_fail.failed == false
+
+  - name: Test error - invalid domain name (should fail)
+    cisco.intersight.intersight_resource_group:
+      <<: *api_info
+      name: test_rg
+      resources:
+        - domain_name: "nonexistent-domain-xyz-12345"
+    register: invalid_domain_result
+    failed_when:
+      - invalid_domain_result.failed == false
 
   always:
   - name: Remove all test Resource Groups
@@ -179,3 +233,4 @@
       state: absent
     loop:
       - test_rg
+      - test_rg_subtargets
