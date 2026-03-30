@@ -51,7 +51,7 @@ options:
       - List of Intersight-managed UCS domain resources to include in the Resource Group.
       - Required when O(state) is C(present).
       - Each entry specifies a domain by its target name as shown in the Intersight GUI Targets page.
-      - When O(sub_targets) is provided, only the specified servers (by serial number) are included instead of the full domain.
+      - When O(resources[].sub_targets) is provided, only the specified servers (by serial number) are included instead of the full domain.
       - Multiple entries can be mixed, some with sub-targets and some without.
     type: list
     elements: dict
