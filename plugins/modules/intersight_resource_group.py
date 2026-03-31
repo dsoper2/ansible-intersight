@@ -17,7 +17,8 @@ short_description: Resource Group configuration for Cisco Intersight
 description:
   - Manages Resource Group configuration on Cisco Intersight.
   - Resource Groups define a set of resources that can be used for access control and organization assignment.
-  - Supports both C(all) and C(selectors) qualifier types.
+  - Users specify Intersight-managed UCS domains by their target name (as shown in the Intersight Targets page).
+  - Optionally, specific servers (sub-targets) within a domain can be selected by serial number.
   - Resource Groups are account-level resources and are not scoped to an organization.
   - For more information see L(Cisco Intersight,https://intersight.com/apidocs/resource/Group/model/).
 extends_documentation_fragment: intersight
@@ -45,95 +46,78 @@ options:
       - List of tags in Key:<user-defined key> Value:<user-defined value> format.
     type: list
     elements: dict
-  qualifier:
+  resources:
     description:
-      - Qualifier defines how resources are added to the Resource Group.
-      - C(all) includes all resources (represents Allow-All in the API).
-      - C(selectors) uses selector queries to filter specific resources (represents Allow-Selectors in the API).
-    type: str
-    choices: [all, selectors]
-    default: all
-  selectors:
-    description:
-      - List of selector query strings used to filter resources for the Resource Group.
-      - Required when O(qualifier) is C(selectors).
-      - "Each selector is an API path with a filter query."
-      - "Example: C(/api/v1/asset/DeviceRegistrations?$filter=Moid in ('moid_value'))"
-      - "Example: C(/api/v1/compute/Blades?$filter=Serial in ('serial_value') and ManagementMode eq 'Intersight')"
+      - List of Intersight-managed UCS domain resources to include in the Resource Group.
+      - Required when O(state) is C(present).
+      - Each entry specifies a domain by its target name as shown in the Intersight GUI Targets page.
+      - When O(resources[].sub_targets) is provided, only the specified servers (by serial number) are included instead of the full domain.
+      - Multiple entries can be mixed, some with sub-targets and some without.
     type: list
-    elements: str
+    elements: dict
+    suboptions:
+      domain_name:
+        description:
+          - The name of the Intersight-managed UCS domain target.
+          - Must match the target name exactly as displayed in the Intersight Targets page.
+        type: str
+        required: true
+      sub_targets:
+        description:
+          - List of server serial numbers to include as sub-targets within the domain.
+          - When specified, only these servers are included instead of the entire domain.
+          - Servers are automatically classified as Blades or RackUnits via the Intersight API.
+        type: list
+        elements: str
 author:
   - Ron Gershburg (@rgershbu)
 '''
 
 EXAMPLES = r'''
-- name: Create Resource Group with all qualifier
+- name: Create Resource Group for full UCS domains
   cisco.intersight.intersight_resource_group:
     api_private_key: "{{ api_private_key }}"
     api_key_id: "{{ api_key_id }}"
-    name: "all-resources-group"
-    description: "Resource group that includes all resources"
-    qualifier: "all"
+    name: "ucs-domains-group"
+    description: "Resource group for two UCS domains"
+    resources:
+      - domain_name: "ucs-domain-1"
+      - domain_name: "ucs-domain-2"
     state: present
 
-- name: Create Resource Group with selectors for specific devices
+- name: Create Resource Group with sub-targets (specific servers)
   cisco.intersight.intersight_resource_group:
     api_private_key: "{{ api_private_key }}"
     api_key_id: "{{ api_key_id }}"
-    name: "selected-devices-group"
-    description: "Resource group for specific devices"
-    qualifier: "selectors"
-    selectors:
-      - "/api/v1/asset/DeviceRegistrations?$filter=Moid in ('507f1f77bcf86cd799439011')"
+    name: "specific-servers-group"
+    description: "Only specific servers from the domain"
+    resources:
+      - domain_name: "ucs-domain-1"
+        sub_targets:
+          - "FCH26387BD1"
+          - "FCH243974ZD"
+          - "WZP26030TAV"
     state: present
 
-- name: Create multiple Resource Groups for UCS domains
+- name: Create Resource Group with mixed resources
   cisco.intersight.intersight_resource_group:
     api_private_key: "{{ api_private_key }}"
     api_key_id: "{{ api_key_id }}"
-    name: "{{ item.name }}"
-    description: "{{ item.description }}"
-    qualifier: "selectors"
-    selectors:
-      - "{{ item.selector }}"
-    state: present
-  loop:
-    - name: "ucs-lab-domain-1"
-      description: "Lab UCS domain 1"
-      selector: "/api/v1/asset/DeviceRegistrations?$filter=Moid in ('507f1f77bcf86cd799439011')"
-    - name: "ucs-lab-domain-2"
-      description: "Lab UCS domain 2"
-      selector: "/api/v1/asset/DeviceRegistrations?$filter=Moid in ('507f1f77bcf86cd799439022')"
-    - name: "ucs-lab-domain-3"
-      description: "Lab UCS domain 3"
-      selector: "/api/v1/asset/DeviceRegistrations?$filter=Moid in ('507f1f77bcf86cd799439033')"
-
-- name: Create Resource Group with selectors for compute blades
-  cisco.intersight.intersight_resource_group:
-    api_private_key: "{{ api_private_key }}"
-    api_key_id: "{{ api_key_id }}"
-    name: "blade-servers-group"
-    qualifier: "selectors"
-    selectors:
-      - "/api/v1/compute/Blades?$filter=Serial in ('FCH26387CE1') and ManagementMode eq 'Intersight'"
-    state: present
-
-- name: Update Resource Group from all to selectors
-  cisco.intersight.intersight_resource_group:
-    api_private_key: "{{ api_private_key }}"
-    api_key_id: "{{ api_key_id }}"
-    name: "all-resources-group"
-    description: "Now scoped to specific devices"
-    qualifier: "selectors"
-    selectors:
-      - "/api/v1/asset/DeviceRegistrations?$filter=Moid in ('507f1f77bcf86cd799439011')"
+    name: "mixed-resources-group"
+    description: "Full domain and specific servers from another"
+    resources:
+      - domain_name: "ucs-domain-1"
+      - domain_name: "ucs-domain-2"
+        sub_targets:
+          - "FCH26387BD1"
+          - "WZP26030TAV"
     state: present
 
 - name: Delete Resource Group
   cisco.intersight.intersight_resource_group:
     api_private_key: "{{ api_private_key }}"
     api_key_id: "{{ api_key_id }}"
-    name: "all-resources-group"
+    name: "ucs-domains-group"
     state: absent
 '''
 
@@ -144,36 +128,137 @@ api_response:
   type: dict
   sample:
     "api_response": {
-        "Name": "all-resources-group",
+        "Name": "ucs-domains-group",
         "ObjectType": "resource.Group",
-        "Description": "Resource group that includes all resources",
-        "Qualifier": "Allow-All",
-        "Selectors": []
+        "Description": "Resource group for two UCS domains",
+        "Moid": "507f1f77bcf86cd799439099"
     }
 '''
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.intersight.plugins.module_utils.intersight import IntersightModule, intersight_argument_spec
 
-QUALIFIER_MAP = {
-    'all': 'Allow-All',
-    'selectors': 'Allow-Selectors',
-}
+
+def resolve_domain_device_registration(intersight, domain_name):
+    """Resolve a domain target name to its DeviceRegistration Moid."""
+    intersight.get_resource(
+        resource_path='/asset/Targets',
+        query_params={
+            '$filter': f"Name eq '{domain_name}' and TargetType eq 'UCSFIISM'",
+            '$select': 'Name,RegisteredDevice',
+            '$expand': 'RegisteredDevice($select=Moid)',
+        },
+    )
+
+    target = intersight.result['api_response']
+    if not target.get('Moid'):
+        intersight.module.fail_json(
+            msg=f"Intersight-managed UCS domain target '{domain_name}' not found. "
+                "Verify the target name matches exactly as shown in the Intersight Targets page."
+        )
+
+    registered_device = target.get('RegisteredDevice', {})
+    device_reg_moid = registered_device.get('Moid')
+    if not device_reg_moid:
+        intersight.module.fail_json(
+            msg=f"Domain target '{domain_name}' has no associated DeviceRegistration. "
+                "Ensure the domain is properly claimed and connected."
+        )
+
+    return device_reg_moid
+
+
+def classify_serial_numbers(intersight, serials):
+    """Classify serial numbers as Blade or RackUnit via PhysicalSummaries.
+
+    Returns:
+        Tuple of (blade_serials, rack_serials) lists.
+    """
+    serials_filter = ",".join(f"'{s}'" for s in serials)
+    intersight.get_resource(
+        resource_path='/compute/PhysicalSummaries',
+        query_params={
+            '$filter': f"Serial in ({serials_filter}) and ManagementMode eq 'Intersight'",
+            '$select': 'Serial,SourceObjectType',
+        },
+        return_list=True,
+    )
+
+    results = intersight.result['api_response']
+    if not isinstance(results, list):
+        results = [results] if results else []
+
+    found_serials = {}
+    for entry in results:
+        serial = entry.get('Serial')
+        obj_type = entry.get('SourceObjectType', '')
+        if serial:
+            found_serials[serial] = obj_type
+
+    missing = set(serials) - set(found_serials.keys())
+    if missing:
+        intersight.module.fail_json(
+            msg=f"The following serial numbers were not found as Intersight-managed servers: {sorted(missing)}"
+        )
+
+    blade_serials = [s for s in serials if 'Blade' in found_serials[s]]
+    rack_serials = [s for s in serials if 'RackUnit' in found_serials[s]]
+
+    return blade_serials, rack_serials
+
+
+def resolve_resources_to_selectors(intersight, resources):
+    """Resolve user-provided resources into API selector strings."""
+    device_reg_moids = []
+    all_blade_serials = []
+    all_rack_serials = []
+
+    for resource in resources:
+        domain_name = resource['domain_name']
+        sub_targets = resource.get('sub_targets')
+
+        if sub_targets:
+            blade_serials, rack_serials = classify_serial_numbers(intersight, sub_targets)
+            all_blade_serials.extend(blade_serials)
+            all_rack_serials.extend(rack_serials)
+        else:
+            moid = resolve_domain_device_registration(intersight, domain_name)
+            device_reg_moids.append(moid)
+
+    selectors = []
+
+    if device_reg_moids:
+        moids_str = ",".join(f"'{m}'" for m in device_reg_moids)
+        selectors.append(
+            f"/api/v1/asset/DeviceRegistrations?$filter=Moid in ({moids_str})"
+        )
+
+    if all_blade_serials:
+        serials_str = ",".join(f"'{s}'" for s in all_blade_serials)
+        selectors.append(
+            f"/api/v1/compute/Blades?$filter=Serial in ({serials_str}) and ManagementMode eq 'Intersight'"
+        )
+
+    if all_rack_serials:
+        serials_str = ",".join(f"'{s}'" for s in all_rack_serials)
+        selectors.append(
+            f"/api/v1/compute/RackUnits?$filter=Serial in ({serials_str}) and ManagementMode eq 'Intersight'"
+        )
+
+    return selectors
 
 
 def build_api_body(intersight):
     """Build the API body for Resource Group configuration."""
     params = intersight.module.params
     if params['state'] == 'present':
+        selectors = resolve_resources_to_selectors(intersight, params['resources'])
+
         intersight.api_body = {
             'Name': params['name'],
-            'Qualifier': QUALIFIER_MAP[params['qualifier']],
+            'Qualifier': 'Allow-Selectors',
+            'Selectors': [{'Selector': s} for s in selectors],
         }
-
-        if params['qualifier'] == 'selectors' and params.get('selectors'):
-            intersight.api_body['Selectors'] = [
-                {'Selector': s} for s in params['selectors']
-            ]
 
         intersight.set_tags_and_description()
 
@@ -185,15 +270,17 @@ def main():
         name=dict(type='str', required=True),
         description=dict(type='str', aliases=['descr']),
         tags=dict(type='list', elements='dict'),
-        qualifier=dict(type='str', choices=['all', 'selectors'], default='all'),
-        selectors=dict(type='list', elements='str'),
+        resources=dict(type='list', elements='dict', options=dict(
+            domain_name=dict(type='str', required=True),
+            sub_targets=dict(type='list', elements='str'),
+        )),
     )
 
     module = AnsibleModule(
         argument_spec,
         supports_check_mode=True,
         required_if=[
-            ['qualifier', 'selectors', ['selectors']],
+            ['state', 'present', ['resources']],
         ],
     )
 
