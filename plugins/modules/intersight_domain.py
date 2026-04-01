@@ -52,15 +52,15 @@ options:
       - List of tags in Key:<user-defined key> Value:<user-defined value> format.
     type: list
     elements: dict
-  assigned_switch_a:
+  assigned_switch_a_serial:
     description:
-      - The name of the Fabric Interconnect to assign to SwitchProfile A.
-      - Resolved via the C(/network/ElementSummaries) API endpoint.
+      - The serial number of the Fabric Interconnect to assign to SwitchProfile A.
+      - Resolved via the C(/network/ElementSummaries) API endpoint using the C(Serial) field.
     type: str
-  assigned_switch_b:
+  assigned_switch_b_serial:
     description:
-      - The name of the Fabric Interconnect to assign to SwitchProfile B.
-      - Resolved via the C(/network/ElementSummaries) API endpoint.
+      - The serial number of the Fabric Interconnect to assign to SwitchProfile B.
+      - Resolved via the C(/network/ElementSummaries) API endpoint using the C(Serial) field.
     type: str
   vlan_policy_fi_a:
     description:
@@ -145,8 +145,8 @@ EXAMPLES = r'''
     organization: "default"
     name: "Domain-01"
     description: "Full domain profile"
-    assigned_switch_a: "DOMAIN FI-A"
-    assigned_switch_b: "DOMAIN FI-B"
+    assigned_switch_a_serial: "FDO23456ABC"
+    assigned_switch_b_serial: "FDO23456DEF"
     vlan_policy_fi_a: "VLAN-Policy-A"
     vlan_policy_fi_b: "VLAN-Policy-B"
     vsan_policy_fi_a: "VSAN-Policy-A"
@@ -199,6 +199,7 @@ from ansible_collections.cisco.intersight.plugins.module_utils.intersight import
     sync_policy_bucket,
 )
 
+
 PER_FI_A_POLICY_MAPPING = {
     'vlan_policy_fi_a': {'resource_path': '/fabric/EthNetworkPolicies', 'object_type': 'fabric.EthNetworkPolicy'},
     'vsan_policy_fi_a': {'resource_path': '/fabric/FcNetworkPolicies', 'object_type': 'fabric.FcNetworkPolicy'},
@@ -224,23 +225,19 @@ SHARED_POLICY_MAPPING = {
 }
 
 
-def resolve_switch_moid(intersight, switch_name):
-    """Resolve a Fabric Interconnect name to its MOID via /network/ElementSummaries."""
-    moid = intersight.get_moid_by_name(
+def resolve_switch_moid_by_serial(intersight, serial):
+    """Resolve a Fabric Interconnect serial number to its MOID via /network/ElementSummaries."""
+    intersight.get_resource(
         resource_path='/network/ElementSummaries',
-        resource_name=switch_name,
+        query_params={
+            '$filter': f"Serial eq '{serial}'",
+            '$select': 'Moid',
+        },
     )
+    moid = intersight.result['api_response'].get('Moid')
     if not moid:
-        intersight.get_resource(
-            resource_path='/network/ElementSummaries',
-            query_params={'$select': 'Name,SwitchId'},
-            return_list=True,
-        )
-        elements = intersight.result['api_response']
-        if not isinstance(elements, list):
-            elements = [elements] if elements else []
         intersight.module.fail_json(
-            msg=f"Fabric Interconnect '{switch_name}' not found. "
+            msg=f"Fabric Interconnect with serial '{serial}' not found."
         )
     return moid
 
@@ -281,8 +278,8 @@ def configure_switch_profiles(intersight, domain_name, cluster_moid):
     Returns a list of (profile_moid, profile_state) tuples for each FI.
     """
     fi_configs = [
-        {'switch_id': 'A', 'switch_param': 'assigned_switch_a'},
-        {'switch_id': 'B', 'switch_param': 'assigned_switch_b'},
+        {'switch_id': 'A', 'switch_param': 'assigned_switch_a_serial'},
+        {'switch_id': 'B', 'switch_param': 'assigned_switch_b_serial'},
     ]
 
     profile_results = []
@@ -290,9 +287,9 @@ def configure_switch_profiles(intersight, domain_name, cluster_moid):
         profile_moid = ensure_switch_profile(intersight, domain_name, fi['switch_id'], cluster_moid)
         profile_state = dict(intersight.result['api_response'])
 
-        switch_name = intersight.module.params.get(fi['switch_param'])
-        if switch_name and profile_moid:
-            switch_moid = resolve_switch_moid(intersight, switch_name)
+        switch_serial = intersight.module.params.get(fi['switch_param'])
+        if switch_serial and profile_moid:
+            switch_moid = resolve_switch_moid_by_serial(intersight, switch_serial)
             current_switch = (profile_state.get('AssignedSwitch') or {}).get('Moid')
             if current_switch != switch_moid:
                 intersight.configure_resource(
@@ -366,8 +363,8 @@ def main():
         name=dict(type='str', required=True),
         description=dict(type='str', aliases=['descr']),
         tags=dict(type='list', elements='dict'),
-        assigned_switch_a=dict(type='str'),
-        assigned_switch_b=dict(type='str'),
+        assigned_switch_a_serial=dict(type='str'),
+        assigned_switch_b_serial=dict(type='str'),
         vlan_policy_fi_a=dict(type='str'),
         vlan_policy_fi_b=dict(type='str'),
         vsan_policy_fi_a=dict(type='str'),
@@ -392,7 +389,7 @@ def main():
             ['state', 'present', ['system_qos_policy']],
         ],
         required_together=[
-            ['assigned_switch_a', 'assigned_switch_b'],
+            ['assigned_switch_a_serial', 'assigned_switch_b_serial'],
         ],
     )
 
