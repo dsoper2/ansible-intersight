@@ -61,8 +61,16 @@ options:
     default: ''
   assigned_server:
     description:
-      - Managed Obect ID (MOID) of assigned server.
+      - Managed Object ID (MOID) of assigned server.
       - Option can be omitted if user wishes to assign server later.
+      - Mutually exclusive with C(assigned_server_serial).
+    type: str
+  assigned_server_serial:
+    description:
+      - Serial number of the server to assign.
+      - The module will resolve the serial number to a MOID via the Intersight API.
+      - Option can be omitted if user wishes to assign server later.
+      - Mutually exclusive with C(assigned_server).
     type: str
   adapter_policy:
     description:
@@ -233,6 +241,16 @@ EXAMPLES = r'''
     uuid_address_type: static
     static_uuid_address: 550e8400-e29b-41d4-a716-446655440000
 
+- name: Configure Server Profile with server serial number
+  cisco.intersight.intersight_server_profile:
+    api_private_key: "{{ api_private_key }}"
+    api_key_id: "{{ api_key_id }}"
+    name: SP-Server4
+    target_platform: FIAttached
+    description: Profile assigned by serial number
+    assigned_server_serial: FCH2149V0GN
+    boot_order_policy: COS-Boot
+
 - name: Delete Server Profile
   cisco.intersight.intersight_server_profile:
     api_private_key: "{{ api_private_key }}"
@@ -362,6 +380,7 @@ def main():
         tags=dict(type='list', elements='dict', default=[]),
         description=dict(type='str', aliases=['descr'], default=''),
         assigned_server=dict(type='str'),
+        assigned_server_serial=dict(type='str'),
         adapter_policy=dict(type='str'),
         bios_policy=dict(type='str'),
         boot_order_policy=dict(type='str'),
@@ -395,6 +414,9 @@ def main():
     module = AnsibleModule(
         argument_spec,
         supports_check_mode=True,
+        mutually_exclusive=[
+            ['assigned_server', 'assigned_server_serial'],
+        ],
         required_if=[
             ['uuid_address_type', 'pool', ['uuid_pool']],
             ['uuid_address_type', 'static', ['static_uuid_address']],
@@ -417,18 +439,30 @@ def main():
     intersight.set_tags_and_description()
     intersight.result['api_response'] = {}
     # Get assigned server information (if defined)
-    if intersight.module.params['assigned_server']:
+    if intersight.module.params['assigned_server'] or intersight.module.params['assigned_server_serial']:
+        if intersight.module.params['assigned_server_serial']:
+            server_filter = "Serial eq '" + intersight.module.params['assigned_server_serial'] + "'"
+        else:
+            server_filter = "Moid eq '" + intersight.module.params['assigned_server'] + "'"
         intersight.get_resource(
             resource_path='/compute/PhysicalSummaries',
             query_params={
-                '$filter': "Moid eq '" + intersight.module.params['assigned_server'] + "'",
+                '$filter': server_filter,
             }
         )
+        if intersight.module.params['assigned_server_serial'] and not intersight.result['api_response'].get('Moid'):
+            module.fail_json(
+                msg=f"Server with serial number '{intersight.module.params['assigned_server_serial']}' not found in Intersight."
+            )
         source_object_type = None
         if intersight.result['api_response'].get('SourceObjectType'):
             source_object_type = intersight.result['api_response']['SourceObjectType']
+        if intersight.module.params['assigned_server']:
+            server_moid = intersight.module.params['assigned_server']
+        else:
+            server_moid = intersight.result['api_response']['Moid']
         intersight.api_body['AssignedServer'] = {
-            'Moid': intersight.module.params['assigned_server'],
+            'Moid': server_moid,
             'ObjectType': source_object_type,
         }
     if intersight.module.params['target_platform'] == 'FIAttached':
