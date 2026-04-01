@@ -1,5 +1,8 @@
 # cisco.intersight Ansible Collection Changelog
 
+## Version 2.17.0
+- Resource Group resources list and Domain/Server Profile updates to use serial numbers.
+
 ## Version 2.16.0
 - Chassis Profile, Domain Profile, Organization, Resource Group, and Server Profile Template modules added.
 
