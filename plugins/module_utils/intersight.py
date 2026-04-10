@@ -247,7 +247,7 @@ class IntersightModule():
         try:
             response, info = self.intersight_call(**options)
             if not re.match(r'2..', str(info['status'])):
-                raise RuntimeError(info['status'], info['msg'], info['body'])
+                raise RuntimeError(info.get('status'), info.get('msg'), info.get('body', info))
         except Exception as e:
             self.module.fail_json(msg="Code exception: %s " % str(e))
 
