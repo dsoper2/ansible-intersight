@@ -64,8 +64,20 @@ options:
   ip_pool:
     description:
       - IP Pool used to assign IP address and other required network settings.
-    type: str
+    type: dict
     required: true
+    suboptions:
+      name:
+        description:
+          - Name of the IP Pool used to assign IP address and other required network settings.
+        type: str
+        required: true
+      organization:
+        description:
+          - The name of the Organization that owns the IP Pool.
+          - Defaults to the value of C(organization) when omitted.
+          - Set this when the IMC Access Policy should consume an IP Pool from a different Organization.
+        type: str
 author:
   - David Soper (@dsoper2)
 '''
@@ -80,7 +92,19 @@ EXAMPLES = r'''
     tags:
       - Site: D23
     vlan_id: 131
-    ip_pool: sjc02-d23-ext-mgmt
+    ip_pool:
+      name: sjc02-d23-ext-mgmt
+
+- name: Configure IMC Access policy with IP pool from another organization
+  intersight_imc_access_policy:
+    api_private_key: "{{ api_private_key }}"
+    api_key_id: "{{ api_key_id }}"
+    organization: policy-org
+    name: sjc02-d23-access
+    vlan_id: 131
+    ip_pool:
+      name: shared-ext-mgmt
+      organization: shared-org
 
 - name: Delete IMC Access policy
   intersight_imc_access_policy:
@@ -133,7 +157,14 @@ def main():
         tags=dict(type='list', elements='dict'),
         out_of_band=dict(type='bool', default=False),
         vlan_id=dict(type='int'),
-        ip_pool=dict(type='str', required=True),
+        ip_pool=dict(
+            type='dict',
+            required=True,
+            options=dict(
+                name=dict(type='str', required=True),
+                organization=dict(type='str'),
+            ),
+        ),
     )
 
     module = AnsibleModule(
@@ -145,34 +176,25 @@ def main():
     )
 
     intersight = IntersightModule(module)
+    ip_pool = module.params['ip_pool']
+    ip_pool_organization = ip_pool.get('organization') or module.params['organization']
 
-    organization_moid = None
-    # GET Organization Moid
-    intersight.get_resource(
+    organization_moid = intersight.get_moid_by_name(
         resource_path='/organization/Organizations',
-        query_params={
-            '$filter': "Name eq '" + intersight.module.params['organization'] + "'",
-            '$select': 'Moid',
-        },
+        resource_name=module.params['organization'],
     )
-    if intersight.result['api_response'].get('Moid'):
-        # resource exists and moid was returned
-        organization_moid = intersight.result['api_response']['Moid']
+    if not organization_moid:
+        module.fail_json(msg=f"Organization '{module.params['organization']}' not found")
 
-    ip_pool_moid = None
-    # GET IP Pool Moid
-    filter_str = "Name eq '" + intersight.module.params['ip_pool'] + "'"
-    filter_str += "and Organization.Moid eq '" + organization_moid + "'"
-    intersight.get_resource(
+    ip_pool_moid = intersight.get_moid_by_name_and_org(
         resource_path='/ippool/Pools',
-        query_params={
-            '$filter': filter_str,
-            '$select': 'Moid',
-        },
+        resource_name=ip_pool['name'],
+        organization_name=ip_pool_organization,
     )
-    if intersight.result['api_response'].get('Moid'):
-        # resource exists and moid was returned
-        ip_pool_moid = intersight.result['api_response']['Moid']
+    if not ip_pool_moid:
+        module.fail_json(
+            msg=f"IP pool '{ip_pool['name']}' not found in organization '{ip_pool_organization}'"
+        )
 
     intersight.result['api_response'] = {}
     intersight.result['trace_id'] = ''
