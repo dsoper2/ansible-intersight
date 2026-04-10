@@ -104,6 +104,26 @@ options:
           - Valid login password of the user.
         type: str
         required: true
+      endpoint_role_type:
+        description:
+          - The type of endpoint role to assign to the user.
+          - IMC is the default server management role type.
+          - IPMI enables IPMI access for the user.
+        type: str
+        choices: [IMC, IPMI]
+        default: IMC
+      account_type_user_defined:
+        description:
+          - If true, account types are user-defined rather than derived from the endpoint role.
+          - Should be set to true when specifying custom account_types.
+        type: bool
+        default: false
+      account_types:
+        description:
+          - List of account type objects to assign to the user.
+          - Each entry must include an ObjectType key (e.g., iam.AccountTypeIpmi).
+        type: list
+        elements: dict
   purge:
     description:
       - The purge argument instructs the module to consider the resource definition absolute.
@@ -138,6 +158,21 @@ EXAMPLES = r'''
       - username: reader
         role: readonly
         password: vault_reader_password
+
+- name: Configure Local User policy with IPMI user
+  intersight_local_user_policy:
+    api_private_key: "{{ api_private_key }}"
+    api_key_id: "{{ api_key_id }}"
+    name: ipmi-admin
+    description: User with IPMI account type
+    local_users:
+      - username: ipmi-user
+        role: admin
+        password: vault_ipmi_password
+        endpoint_role_type: IPMI
+        account_type_user_defined: true
+        account_types:
+          - ObjectType: iam.AccountTypeIpmi
 
 - name: Delete Local User policy
   intersight_local_user_policy:
@@ -175,6 +210,9 @@ def main():
         enable=dict(type='bool', default=True),
         role=dict(type='str', choices=['admin', 'readonly', 'user'], required=True),
         password=dict(type='str', required=True, no_log=True),
+        endpoint_role_type=dict(type='str', choices=['IMC', 'IPMI'], default='IMC'),
+        account_type_user_defined=dict(type='bool', default=False),
+        account_types=dict(type='list', elements='dict'),
     )
     argument_spec = intersight_argument_spec.copy()
     argument_spec.update(
@@ -254,7 +292,7 @@ def main():
                         'EndPointRole': [
                             {
                                 'Name': user['role'],
-                                'Type': 'IMC',
+                                'Type': user.get('endpoint_role_type', 'IMC'),
                             },
                         ],
                         'EndPointUser': {
@@ -342,7 +380,7 @@ def main():
                 intersight.get_resource(
                     resource_path='/iam/EndPointRoles',
                     query_params={
-                        '$filter': "Name eq '" + user['role'] + "' and Type eq 'IMC'",
+                        '$filter': "Name eq '" + user['role'] + "' and Type eq '" + user.get('endpoint_role_type', 'IMC') + "'",
                     },
                 )
                 end_point_role_moid = None
@@ -365,6 +403,10 @@ def main():
                         'Moid': user_policy_moid,
                     },
                 }
+                if user.get('account_type_user_defined'):
+                    intersight.api_body['IsAccountTypeUserDefined'] = True
+                if user.get('account_types'):
+                    intersight.api_body['AccountTypes'] = user['account_types']
                 intersight.configure_resource(
                     moid=None,
                     resource_path='/iam/EndPointUserRoles',
