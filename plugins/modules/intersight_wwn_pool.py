@@ -36,7 +36,7 @@ options:
   name:
     description:
       - The name assigned to the WWNN/WWPN Pool.
-      - The name must be between 1 and 62 alphanumeric characters, allowing special characters :-_.
+      - The name must be between 1 and 64 alphanumeric characters, allowing special characters :-_.
       - Two pools WWNN and WWNP can have the same name.
     type: str
     required: true
