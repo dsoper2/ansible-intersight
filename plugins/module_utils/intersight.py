@@ -41,7 +41,6 @@ import json
 import hashlib
 from typing import Optional
 
-from ansible.module_utils.six import iteritems
 from ansible.module_utils.six.moves.urllib.parse import urlparse, urlencode
 from ansible.module_utils.urls import fetch_url
 from ansible.module_utils.basic import env_fallback
@@ -128,7 +127,7 @@ def compare_values(expected, actual):
     try:
         if isinstance(expected, list) and isinstance(actual, list):
             return compare_lists(expected, actual)
-        for (key, value) in iteritems(expected):
+        for (key, value) in expected.items():
             if re.search(r'P(ass)?w(or)?d', key) or re.search(r'OctetString', key) or re.search(r'IsOctetStringSet', key) or key not in actual:
                 # do not compare any password related attributes, OctetString (secrets), IsOctetStringSet, or attributes that are not in the actual resource
                 continue
