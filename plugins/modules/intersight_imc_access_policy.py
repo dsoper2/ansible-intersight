@@ -64,20 +64,14 @@ options:
   ip_pool:
     description:
       - IP Pool used to assign IP address and other required network settings.
-    type: dict
+      - May be provided as a string pool name in the same organization as the policy.
+      - May also be provided as a dictionary with C(name) and optional C(organization).
+      - Dictionary field C(name) is the name of the IP Pool used to assign IP address and other required network settings.
+      - Dictionary field C(organization) is the name of the Organization that owns the IP Pool.
+      - Dictionary field C(organization) defaults to the value of C(organization) when omitted.
+      - Set dictionary field C(organization) when the IMC Access Policy should consume an IP Pool from a different Organization.
+    type: raw
     required: true
-    suboptions:
-      name:
-        description:
-          - Name of the IP Pool used to assign IP address and other required network settings.
-        type: str
-        required: true
-      organization:
-        description:
-          - The name of the Organization that owns the IP Pool.
-          - Defaults to the value of C(organization) when omitted.
-          - Set this when the IMC Access Policy should consume an IP Pool from a different Organization.
-        type: str
 author:
   - David Soper (@dsoper2)
 '''
@@ -91,6 +85,14 @@ EXAMPLES = r'''
     description: IMC access for SJC02 rack D23
     tags:
       - Site: D23
+    vlan_id: 131
+    ip_pool: sjc02-d23-ext-mgmt
+
+- name: Configure IMC Access policy using dictionary form for ip_pool
+  intersight_imc_access_policy:
+    api_private_key: "{{ api_private_key }}"
+    api_key_id: "{{ api_key_id }}"
+    name: sjc02-d23-access
     vlan_id: 131
     ip_pool:
       name: sjc02-d23-ext-mgmt
@@ -147,6 +149,25 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.intersight.plugins.module_utils.intersight import IntersightModule, intersight_argument_spec, compare_values
 
 
+def normalize_ip_pool(module, ip_pool, default_organization):
+    if isinstance(ip_pool, str):
+        return {
+            'name': ip_pool,
+            'organization': default_organization,
+        }
+
+    if isinstance(ip_pool, dict):
+        ip_pool_name = ip_pool.get('name')
+        if not ip_pool_name:
+            module.fail_json(msg="ip_pool.name is required when ip_pool is provided as a dictionary")
+        return {
+            'name': ip_pool_name,
+            'organization': ip_pool.get('organization') or default_organization,
+        }
+
+    module.fail_json(msg="ip_pool must be either a string pool name or a dictionary with name and optional organization")
+
+
 def main():
     argument_spec = intersight_argument_spec.copy()
     argument_spec.update(
@@ -157,14 +178,7 @@ def main():
         tags=dict(type='list', elements='dict'),
         out_of_band=dict(type='bool', default=False),
         vlan_id=dict(type='int'),
-        ip_pool=dict(
-            type='dict',
-            required=True,
-            options=dict(
-                name=dict(type='str', required=True),
-                organization=dict(type='str'),
-            ),
-        ),
+        ip_pool=dict(type='raw', required=True),
     )
 
     module = AnsibleModule(
@@ -176,8 +190,8 @@ def main():
     )
 
     intersight = IntersightModule(module)
-    ip_pool = module.params['ip_pool']
-    ip_pool_organization = ip_pool.get('organization') or module.params['organization']
+    ip_pool = normalize_ip_pool(module, module.params['ip_pool'], module.params['organization'])
+    ip_pool_organization = ip_pool['organization']
 
     organization_moid = intersight.get_moid_by_name(
         resource_path='/organization/Organizations',
